@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+use crate::config::Pos;
 
 pub trait MergeRight {
     fn merge_right(self, other: Self) -> Self;
@@ -75,5 +76,11 @@ where
     fn merge_right(mut self, other: Self) -> Self {
         self.extend(other);
         self
+    }
+}
+
+impl<A> MergeRight for Pos<A> {
+    fn merge_right(self, other: Self) -> Self {
+        self.merge(&other)
     }
 }

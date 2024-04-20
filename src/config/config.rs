@@ -19,6 +19,35 @@ use crate::json::JsonSchema;
 use crate::macros::MergeRight;
 use crate::merge_right::MergeRight;
 use crate::valid::{Valid, Validator};
+use std::cmp::max;
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    Default,
+    PartialEq,
+    Eq,
+    schemars::JsonSchema,
+)]
+pub struct Pos<A> {
+    pub line: u64,
+    pub offset: u64,
+    pub value: A,
+}
+
+impl<A> Pos<A> {
+    pub fn merge(&self, other: &Self) -> Self {
+        let merged_line = max(self.line, other.line);
+        let merged_offset = max(self.offset, other.offset);
+        Self {
+            line: merged_line,
+            offset: merged_offset,
+            value: self.value,
+        }
+    }
+}
 
 #[derive(
     Serialize,
@@ -39,24 +68,24 @@ pub struct Config {
     /// requests. Features such as request batching, SSL, HTTP2 etc. can be
     /// configured here.
     #[serde(default)]
-    pub server: Server,
+    pub server: Pos<Server>,
 
     ///
     /// Dictates how tailcall should handle upstream requests/responses.
     /// Tuning upstream can improve performance and reliability for connections.
     #[serde(default)]
-    pub upstream: Upstream,
+    pub upstream: Pos<Upstream>,
 
     ///
     /// Specifies the entry points for query and mutation in the generated
     /// GraphQL schema.
-    pub schema: RootSchema,
+    pub schema: Pos<RootSchema>,
 
     ///
     /// A map of all the types in the schema.
     #[serde(default)]
     #[setters(skip)]
-    pub types: BTreeMap<String, Type>,
+    pub types: BTreeMap<String, Pos<Type>>,
 
     ///
     /// A map of all the union types in the schema.
@@ -74,11 +103,11 @@ pub struct Config {
 
 impl Config {
     pub fn port(&self) -> u16 {
-        self.server.port.unwrap_or(8000)
+        self.server.value.port.unwrap_or(8000)
     }
 
     pub fn find_type(&self, name: &str) -> Option<&Type> {
-        self.types.get(name)
+        self.types.get(name).map(|pos| &pos.value)
     }
 
     pub fn find_union(&self, name: &str) -> Option<&Union> {
@@ -107,7 +136,7 @@ impl Config {
     }
 
     pub fn query(mut self, query: &str) -> Self {
-        self.schema.query = Some(query.to_string());
+        self.schema.value.query = Some(query.to_string());
         self
     }
 
@@ -116,7 +145,12 @@ impl Config {
         for (name, type_) in types {
             graphql_types.insert(name.to_string(), type_);
         }
-        self.types = graphql_types;
+        let pos_types: BTreeMap<String, Pos<Type>> = graphql_types
+            .into_iter()
+            .map(|(name, type_)| (name, Pos { line: 0, offset: 0, value: type_ })) // Adjust Pos initialization as needed
+            .collect();
+
+        self.types = pos_types;
         self
     }
 
@@ -128,16 +162,16 @@ impl Config {
     pub fn get_all_used_type_names(&self) -> HashSet<String> {
         let mut set = HashSet::new();
         let mut stack = Vec::new();
-        if let Some(query) = &self.schema.query {
+        if let Some(query) = &self.schema.value.query {
             stack.push(query.clone());
         }
-        if let Some(mutation) = &self.schema.mutation {
+        if let Some(mutation) = &self.schema.value.mutation {
             stack.push(mutation.clone());
         }
         while let Some(type_name) = stack.pop() {
             if let Some(typ) = self.types.get(&type_name) {
                 set.insert(type_name);
-                for field in typ.fields.values() {
+                for field in typ.value.fields.values() {
                     stack.extend(field.args.values().map(|arg| arg.type_of.clone()));
                     stack.push(field.type_of.clone());
                 }
